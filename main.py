@@ -1,96 +1,59 @@
-import os
 from flask import Flask, request, jsonify
 import requests
-from openai import OpenAI
+from flask_cors import CORS
 
-# Initialize Flask app
 app = Flask(__name__)
+CORS(app)
 
-# Load secrets
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-FIRECRAWL_API_KEY = os.environ.get("FIRECRAWL_API_KEY")
+FIRECRAWL_API_KEY = "fc-8b541da169e64d6b9f706ebc80a55dd2"
+FIRECRAWL_ENDPOINT = "https://api.firecrawl.dev/v1/scrape-url"
 
-# Init OpenAI client
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+@app.route('/')
+def home():
+    return "Unspun backend is running."
 
-# The Unspun analysis prompt
-def build_prompt(article_text):
-    return f"""
-You are Unspun. Analyze this article with journalistic, sociological, political, and historical insight. Be objective. Provide context, motivations, human impact, historical patterns, and questions readers should ask. Return only the analysis, with references.
-
-Article:
-{article_text}
-""".strip()
-
-def scrape_article(url):
-    response = requests.post(
-        "https://api.firecrawl.dev/v1/scrape",
-        headers={"Authorization": f"Bearer {FIRECRAWL_API_KEY}"},
-        json={"url": url}
-    )
-
-    print("Firecrawl status:", response.status_code)
-    print("Firecrawl raw response:", response.text)  # Full text
-    try:
-        result = response.json()
-    except Exception as e:
-        print("❌ JSON decode error:", str(e))
-        return None
-
-    print("✅ Parsed Firecrawl JSON:", result)
-
-    # Show all top-level keys
-    print("Top-level keys:", result.keys())
-
-    # Attempt to get the content
-    content = result.get("data", {}).get("textContent")
-    if not content:
-        print("❌ 'textContent' missing. data keys:", result.get("data", {}).keys())
-    else:
-        print("✅ Extracted content length:", len(content))
-
-    return content
-
-# Main route: /analyze?url=https://...
 @app.route('/analyze', methods=['GET'])
 def analyze():
     url = request.args.get('url')
     if not url:
-        return jsonify({"error": "Missing URL"}), 400
+        return jsonify({'error': 'Missing URL parameter'}), 400
 
-    article_text = scrape_article(url)
-    if not article_text:
-        return jsonify({"error": "Could not extract article"}), 500
+    headers = {
+        "Authorization": f"Bearer {FIRECRAWL_API_KEY}",
+        "Content-Type": "application/json"
+    }
 
-    prompt = build_prompt(article_text)
+    payload = {
+        "url": url,
+        "formats": ["markdown"],
+        "only_main_content": True,
+        "parse_pdf": True,
+        "max_age": 14400000  # Optional caching optimization
+    }
 
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.4
-        )
-        answer = response.choices[0].message.content
-        return jsonify({"analysis": answer})
+        response = requests.post(FIRECRAWL_ENDPOINT, headers=headers, json=payload)
+        response.raise_for_status()
+        result = response.json()
+
+        markdown = result.get("data", {}).get("markdown")
+        if not markdown:
+            print("⚠️ 'markdown' key not found. Full response data keys:", result.get("data", {}).keys())
+            return jsonify({'error': "No 'markdown' content found"}), 500
+
+        return jsonify({'content': markdown})
+
+    except requests.exceptions.HTTPError as e:
+        print(f"🔥 HTTP error: {e} - Response: {response.text}")
+        return jsonify({'error': 'HTTP error occurred while contacting Firecrawl'}), 500
+
+    except ValueError as e:
+        print(f"🔥 JSON decode error: {e} - Raw response: {response.text}")
+        return jsonify({'error': 'Invalid JSON response from Firecrawl'}), 500
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-@app.route('/scrape', methods=['GET'])
-def scrape():
-    url = request.args.get('url')
-    if not url:
-        return jsonify({"error": "Missing URL"}), 400
+        print(f"🔥 General error: {e}")
+        return jsonify({'error': 'An unexpected error occurred'}), 500
 
-    article_text = scrape_article(url)
-    if not article_text:
-        return jsonify({"error": "Could not extract article"}), 500
-
-    return jsonify({"text": article_text})
-
-# Health check
-@app.route('/')
-def index():
-    return '✅ Unspun backend is live.'
-
-# Run the Flask server
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(debug=True)
