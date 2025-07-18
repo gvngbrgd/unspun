@@ -22,15 +22,28 @@ Article:
 {article_text}
 """.strip()
 
-# Scrape article text using Firecrawl
 def scrape_article(url):
     response = requests.post(
         "https://api.firecrawl.dev/v1/scrape",
         headers={"Authorization": f"Bearer {FIRECRAWL_API_KEY}"},
         json={"url": url}
     )
-    result = response.json()
-    return result.get("textContent")
+
+    print("Firecrawl status:", response.status_code)
+    print("Firecrawl raw response:", response.text)
+
+    try:
+        result = response.json()
+    except Exception as e:
+        print("JSON decode error:", str(e))
+        return None
+
+    print("Firecrawl parsed JSON:", result)
+
+    content = result.get("textContent")
+    if not content:
+        print("No 'textContent' found. Available keys:", result.keys())
+    return content
 
 # Main route: /analyze?url=https://...
 @app.route('/analyze', methods=['GET'])
