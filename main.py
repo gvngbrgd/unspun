@@ -40,10 +40,18 @@ def scrape_article(url):
 
     print("Firecrawl parsed JSON:", result)
 
-    content = result.get("data", {}).get("textContent")
-    if not content:
-        print("No 'textContent' found. Available keys:", result.keys())
-    return content
+    # Try to get the content from all possible known Firecrawl keys
+content = (
+    result.get("pageContent") or
+    result.get("data", {}).get("textContent") or
+    result.get("articleText") or
+    result.get("content")
+)
+
+if not content:
+    print("No article content found. Available keys:", result.keys())
+
+return content
 
 # Main route: /analyze?url=https://...
 @app.route('/analyze', methods=['GET'])
