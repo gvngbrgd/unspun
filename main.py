@@ -30,28 +30,26 @@ def scrape_article(url):
     )
 
     print("Firecrawl status:", response.status_code)
-    print("Firecrawl raw response:", response.text)
-
+    print("Firecrawl raw response:", response.text)  # Full text
     try:
         result = response.json()
     except Exception as e:
-        print("JSON decode error:", str(e))
+        print("❌ JSON decode error:", str(e))
         return None
 
-    print("Firecrawl parsed JSON:", result)
+    print("✅ Parsed Firecrawl JSON:", result)
 
-    # ✅ Updated fallback for Firecrawl keys
-    content = (
-        result.get("pageContent") or
-        result.get("data", {}).get("textContent") or
-        result.get("articleText") or
-        result.get("content")
-    )
+    # Show all top-level keys
+    print("Top-level keys:", result.keys())
 
+    # Attempt to get the content
+    content = result.get("data", {}).get("textContent")
     if not content:
-        print("No article content found. Available keys:", result.keys())
+        print("❌ 'textContent' missing. data keys:", result.get("data", {}).keys())
+    else:
+        print("✅ Extracted content length:", len(content))
 
-    return content  # <-- must be indented to match the function!
+    return content
 
 # Main route: /analyze?url=https://...
 @app.route('/analyze', methods=['GET'])
