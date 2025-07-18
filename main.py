@@ -1,0 +1,67 @@
+import os
+from flask import Flask, request, jsonify
+import requests
+import openai
+import os
+
+# Load secrets
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+FIRECRAWL_API_KEY = os.environ.get("FIRECRAWL_API_KEY")
+
+# Set API key
+openai.api_key = OPENAI_API_KEY
+
+# Init OpenAI client
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+# The Unspun analysis prompt
+def build_prompt(article_text):
+    return f"""
+You are Unspun. Analyze this article with journalistic, sociological, political, and historical insight. Be objective. Provide context, motivations, human impact, historical patterns, and questions readers should ask. Return only the analysis, with references.
+
+Article:
+{article_text}
+""".strip()
+
+# Scrape article text using Firecrawl
+def scrape_article(url):
+    response = requests.post(
+        "https://api.firecrawl.dev/v1/scrape",
+        headers={"Authorization": f"Bearer {FIRECRAWL_API_KEY}"},
+        json={"url": url}
+    )
+    result = response.json()
+    return result.get("textContent")
+
+# Main route: /analyze?url=https://...
+@app.route('/analyze', methods=['GET'])
+def analyze():
+    url = request.args.get('url')
+    if not url:
+        return jsonify({"error": "Missing URL"}), 400
+
+    article_text = scrape_article(url)
+    if not article_text:
+        return jsonify({"error": "Could not extract article"}), 500
+
+    prompt = build_prompt(article_text)
+
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.4
+        )
+        answer = response.choices[0].message.content
+        return jsonify({"analysis": answer})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# Health check
+@app.route('/')
+def index():
+    return '✅ Unspun backend is live.'
+
+# Run the Flask server
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=81)
