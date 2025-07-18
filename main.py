@@ -1,59 +1,58 @@
 from flask import Flask, request, jsonify
-import requests
-from flask_cors import CORS
+from firecrawl import FirecrawlApp
+import openai
+import os
 
 app = Flask(__name__)
-CORS(app)
 
-FIRECRAWL_API_KEY = "fc-8b541da169e64d6b9f706ebc80a55dd2"
-FIRECRAWL_ENDPOINT = "https://api.firecrawl.dev/v1/scrape-url"
+# Set your API keys
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
+
+openai.api_key = OPENAI_API_KEY
+fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
 
 @app.route('/')
 def home():
-    return "Unspun backend is running."
+    return "Unspun is live!"
 
 @app.route('/analyze', methods=['GET'])
-def analyze():
-    url = request.args.get('url')
+def analyze_article():
+    url = request.args.get("url")
     if not url:
-        return jsonify({'error': 'Missing URL parameter'}), 400
-
-    headers = {
-        "Authorization": f"Bearer {FIRECRAWL_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "url": url,
-        "formats": ["markdown"],
-        "only_main_content": True,
-        "parse_pdf": True,
-        "max_age": 14400000  # Optional caching optimization
-    }
+        return jsonify({"error": "URL parameter is required"}), 400
 
     try:
-        response = requests.post(FIRECRAWL_ENDPOINT, headers=headers, json=payload)
-        response.raise_for_status()
-        result = response.json()
+        result = fc_app.scrape_url(
+            url=url,
+            formats=["markdown"],
+            only_main_content=True,
+            parse_pdf=True,
+            max_age=14400000
+        )
+        content = result.get("data", {}).get("textContent")
 
-        markdown = result.get("data", {}).get("markdown")
-        if not markdown:
-            print("⚠️ 'markdown' key not found. Full response data keys:", result.get("data", {}).keys())
-            return jsonify({'error': "No 'markdown' content found"}), 500
+        if not content:
+            print("No 'textContent' found. Full Firecrawl response:", result)
+            return jsonify({"error": "Could not extract article content"}), 500
 
-        return jsonify({'content': markdown})
+        # Optional: summarize with OpenAI
+        summary_prompt = f"Summarize this article:\n\n{content[:4000]}"
+        summary_response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": summary_prompt}]
+        )
+        summary = summary_response.choices[0].message['content']
 
-    except requests.exceptions.HTTPError as e:
-        print(f"🔥 HTTP error: {e} - Response: {response.text}")
-        return jsonify({'error': 'HTTP error occurred while contacting Firecrawl'}), 500
-
-    except ValueError as e:
-        print(f"🔥 JSON decode error: {e} - Raw response: {response.text}")
-        return jsonify({'error': 'Invalid JSON response from Firecrawl'}), 500
+        return jsonify({
+            "url": url,
+            "summary": summary,
+            "raw_text": content
+        })
 
     except Exception as e:
-        print(f"🔥 General error: {e}")
-        return jsonify({'error': 'An unexpected error occurred'}), 500
+        print("❌ Error during article analysis:", str(e))
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=10000)
