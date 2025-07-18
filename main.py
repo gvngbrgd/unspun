@@ -40,7 +40,7 @@ def scrape_article(url):
 
     print("Firecrawl parsed JSON:", result)
 
-    content = result.get("textContent")
+    content = result.get("data", {}).get("textContent")
     if not content:
         print("No 'textContent' found. Available keys:", result.keys())
     return content
