@@ -26,7 +26,7 @@ Article:
 def scrape_article(url):
     response = requests.post(
         "https://api.firecrawl.dev/v1/scrape",
-        headers={"Authorization": f"Bearer {FIRECRAWL_API_KEY}"}
+        headers={"Authorization": f"Bearer {FIRECRAWL_API_KEY}"},
         json={"url": url}
     )
     result = response.json()
