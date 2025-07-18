@@ -55,6 +55,17 @@ def analyze():
         return jsonify({"analysis": answer})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+@app.route('/scrape', methods=['GET'])
+def scrape():
+    url = request.args.get('url')
+    if not url:
+        return jsonify({"error": "Missing URL"}), 400
+
+    article_text = scrape_article(url)
+    if not article_text:
+        return jsonify({"error": "Could not extract article"}), 500
+
+    return jsonify({"text": article_text})
 
 # Health check
 @app.route('/')
