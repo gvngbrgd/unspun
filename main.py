@@ -1,15 +1,14 @@
 import os
 from flask import Flask, request, jsonify
 import requests
-import openai
-import os
+from openai import OpenAI
+
+# Initialize Flask app
+app = Flask(__name__)
 
 # Load secrets
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 FIRECRAWL_API_KEY = os.environ.get("FIRECRAWL_API_KEY")
-
-# Set API key
-openai.api_key = OPENAI_API_KEY
 
 # Init OpenAI client
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
