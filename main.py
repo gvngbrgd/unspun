@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 # Set your API keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 openai.api_key = OPENAI_API_KEY
 fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
