@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 # Set your API keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxxxx"
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxx"
 
 # Initialize OpenAI client
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -27,34 +27,42 @@ def analyze_article():
     try:
         result = fc_app.scrape_url(
             url=url,
-            formats=["markdown"],
+            formats=["text"],
             only_main_content=True,
             parse_pdf=True,
             max_age=14400000
         )
         # The firecrawl SDK returns a ScrapeResponse object
-        content = result.markdown
+        content = result.textContent
+
+        raw_content = content
+        clean_paragraphs = [
+            p.strip() for p in raw_content.split("\n")
+            if len(p.strip()) > 60 and p.count("http") < 2
+        ]
+        filtered_content = "\n\n".join(clean_paragraphs)
 
         if not content:
             print("No content found in Firecrawl response:", vars(result))
             return jsonify({"error": "Could not extract article content"}), 500
 
-        # Optional: summarize with OpenAI
+        # Optional: summarize with OpenAI using filtered content
         summary = None
         if openai_client:
             try:
-                # Use first 4000 characters but try to cut at sentence boundary
-                content_for_summary = content[:4000]
-                if len(content) > 4000:
-                    # Try to cut at last sentence to avoid truncation mid-sentence
-                    last_period = content_for_summary.rfind('.')
-                    if last_period > 3000:  # Only if we find a period reasonably close to the end
-                        content_for_summary = content_for_summary[:last_period + 1]
+                system_prompt = (
+                    "You are an expert media analyst. Analyze the following article.\n"
+                    "- Focus only on the **main body of the article**\n"
+                    "- Ignore sidebars, unrelated headlines, and navigation links\n"
+                    "- Return a clear, concise summary focused on the article’s core message and human impact"
+                )
 
-                summary_prompt = f"Summarize this article:\\n\\n{content_for_summary}"
                 summary_response = openai_client.chat.completions.create(
                     model="gpt-4",
-                    messages=[{"role": "user", "content": summary_prompt}]
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": filtered_content[:4000]}
+                    ]
                 )
                 summary = summary_response.choices[0].message.content
             except Exception as openai_error:
@@ -62,11 +70,10 @@ def analyze_article():
                 summary = "Summary unavailable - OpenAI API error"
         else:
             summary = "Summary unavailable - OpenAI API key not configured"
-
         return jsonify({
             "url": url,
             "summary": summary,
-            "raw_text": content
+            "raw_text": filtered_content
         })
 
     except Exception as e:
