@@ -1,5 +1,5 @@
-
 from flask import Flask, request, jsonify
+from html import escape
 from firecrawl import FirecrawlApp
 from openai import OpenAI
 import os
@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 # Set your API keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxx"
 
 # Initialize OpenAI client
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -17,6 +17,22 @@ fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
 @app.route('/')
 def home():
     return "Unspun is live!"
+
+@app.route('/view_code', methods=['GET'])
+def view_code():
+    """Display the contents of this file in a simple textarea."""
+    try:
+        with open(__file__, 'r') as f:
+            code = f.read()
+        # Using a textarea makes it easy for users to copy the source
+        html_content = (
+            "<textarea style='width:100%; height:90vh;' readonly>" +
+            escape(code) +
+            "</textarea>"
+        )
+        return html_content
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/analyze', methods=['GET'])
 def analyze_article():
@@ -49,7 +65,7 @@ def analyze_article():
                     last_period = content_for_summary.rfind('.')
                     if last_period > 3000:  # Only if we find a period reasonably close to the end
                         content_for_summary = content_for_summary[:last_period + 1]
-                
+
                 summary_prompt = f"Summarize this article:\n\n{content_for_summary}"
                 summary_response = openai_client.chat.completions.create(
                     model="gpt-4",
