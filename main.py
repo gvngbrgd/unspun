@@ -27,54 +27,70 @@ def analyze_article():
     try:
         result = fc_app.scrape_url(
             url=url,
-            formats=["text"],
+            formats=["markdown"],
             only_main_content=True,
             parse_pdf=True,
             max_age=14400000
         )
-        # The firecrawl SDK returns a ScrapeResponse object
-        content = result.textContent
+        # Extract main article content
+        content = result.markdown
 
-        raw_content = content
-        clean_paragraphs = [
-            p.strip() for p in raw_content.split("\n")
-            if len(p.strip()) > 60 and p.count("http") < 2
-        ]
-        filtered_content = "\n\n".join(clean_paragraphs)
-
-        if not content:
+        if not content or len(content.strip()) == 0:
             print("No content found in Firecrawl response:", vars(result))
             return jsonify({"error": "Could not extract article content"}), 500
 
-        # Optional: summarize with OpenAI using filtered content
-        summary = None
+        # Trim to stay under token limit and cut at sentence boundary if possible
+        content_for_prompt = content[:4000]
+        if len(content) > 4000:
+            last_period = content_for_prompt.rfind('.')
+            if last_period > 3000:
+                content_for_prompt = content_for_prompt[:last_period + 1]
+
+        analysis = None
+
         if openai_client:
             try:
-                system_prompt = (
-                    "You are a historian, sociologist, media literacy expert, and local journalist. "
-                    "Analyze the article below for bias, framing, omissions, funding or political influences, "
-                    "and the real-world human impact. Focus strictly on the main body text and ignore sidebars "
-                    "or navigation links. Provide a concise 5-7 sentence summary in plain English that captures "
-                    "the core event and broader context."
-                )
+                expert_prompt = f"""
+You are an investigative analyst trained in history, sociology, journalism, and political science.
 
-                summary_response = openai_client.chat.completions.create(
+Using the article content below, produce your analysis in this exact structure:
+
+1. Official Narrative (2–3 sentences): Summarize how the article presents the issue. Stay neutral.
+
+2. Jargon & Spin Decode Table (3–5 rows): For each term or phrase, show:
+– Phrase
+– Literal Meaning
+– What It Might Be Hiding
+
+3. Human Story Snapshot (2–3 sentences): Describe, in plain language, how the events likely impact ordinary people. Label as hypothetical if you cannot verify.
+
+4. Follow the Money (2–3 sentences): Briefly note who financially, politically, or commercially benefits from this event or framing.
+
+5. What It Really Means (2 sentences): Succinctly rephrase the core reality behind the headline, in plain language.
+
+Avoid speculation unless labeled. Avoid assuming motives without evidence. Use clear, neutral language.
+
+ARTICLE:
+'''
+{content_for_prompt}
+'''
+"""
+
+                response = openai_client.chat.completions.create(
                     model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": filtered_content[:4000]}
-                    ]
+                    messages=[{"role": "user", "content": expert_prompt}]
                 )
-                summary = summary_response.choices[0].message.content
+                analysis = response.choices[0].message.content
             except Exception as openai_error:
-                print(f"❌ OpenAI API error: {str(openai_error)}")
-                summary = "Summary unavailable - OpenAI API error"
+                print("❌ OpenAI error:", openai_error)
+                analysis = "Analysis unavailable (OpenAI error)"
         else:
-            summary = "Summary unavailable - OpenAI API key not configured"
+            analysis = "Analysis unavailable (no OpenAI key configured)"
+
         return jsonify({
             "url": url,
-            "summary": summary,
-            "raw_text": filtered_content
+            "raw_text": content,
+            "analysis": analysis
         })
 
     except Exception as e:
