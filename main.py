@@ -1,117 +1,99 @@
 from flask import Flask, request, jsonify
 from html import escape
-from firecrawl import FirecrawlApp
-from openai import OpenAI
+import requests
 import os
+import openai
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
-# Set your API keys
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxx"
+openai.api_key = OPENAI_API_KEY
 
-# Initialize OpenAI client
-openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
+# Analysis prompt
+GPT_PROMPT_TEMPLATE = """
+You are a historian, sociologist, and political analyst. Analyze this news article content in five sections. Use clear, neutral language. Do not speculate unless explicitly labeled as hypothetical.
 
-@app.route('/')
+CONTENT TO ANALYZE:
+{article_text}
+
+STRUCTURE YOUR OUTPUT:
+1. Official Narrative
+2. Jargon & Spin Decode Table
+3. Human Story Snapshot
+4. Follow the Money
+5. What It Really Means
+
+Label each section clearly and follow the tone and style of a professional researcher writing for a public literacy tool.
+"""
+
+def scrape_article(url: str) -> str | None:
+    """Retrieve and clean article content using the Firecrawl API."""
+    try:
+        response = requests.post(
+            "https://api.firecrawl.dev/v1/scrape",
+            headers={"Authorization": f"Bearer {FIRECRAWL_API_KEY}"},
+            json={"url": url, "formats": ["extract"]},
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = data.get("extract") or data.get("markdown") or data.get("html")
+        if not content:
+            return None
+        cleaned = BeautifulSoup(content, "html.parser").get_text()
+        return cleaned[:8000]
+    except Exception as exc:
+        print("Error during scraping:", exc)
+        return None
+
+def analyze_with_gpt(text: str) -> str:
+    """Send cleaned text to GPT-4 for analysis."""
+    try:
+        prompt = GPT_PROMPT_TEMPLATE.format(article_text=text)
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a helpful analyst."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
+    except Exception as exc:
+        print("GPT error:", exc)
+        return "Error generating analysis."
+
+@app.route("/")
 def home():
     return "Unspun is live!"
 
-@app.route('/analyze', methods=['GET'])
-def analyze_article():
+@app.route("/analyze")
+def analyze():
     url = request.args.get("url")
     if not url:
-        return jsonify({"error": "URL parameter is required"}), 400
+        return jsonify({"error": "Missing URL"}), 400
 
-    try:
-        result = fc_app.scrape_url(
-            url=url,
-            formats=["markdown"],
-            only_main_content=True,
-            parse_pdf=True,
-            max_age=14400000
-        )
-        # Extract main article content
-        content = result.markdown
+    article_content = scrape_article(url)
+    if not article_content:
+        return jsonify({"error": "Failed to extract article content."}), 500
 
-        if not content or len(content.strip()) == 0:
-            print("No content found in Firecrawl response:", vars(result))
-            return jsonify({"error": "Could not extract article content"}), 500
+    analysis = analyze_with_gpt(article_content)
+    return jsonify({"url": url, "raw_text": article_content, "analysis": analysis})
 
-        # Trim to stay under token limit and cut at sentence boundary if possible
-        content_for_prompt = content[:4000]
-        if len(content) > 4000:
-            last_period = content_for_prompt.rfind('.')
-            if last_period > 3000:
-                content_for_prompt = content_for_prompt[:last_period + 1]
-
-        analysis = None
-
-        if openai_client:
-            try:
-                expert_prompt = f"""
-You are an investigative analyst trained in history, sociology, journalism, and political science.
-
-Using the article content below, produce your analysis in this exact structure:
-
-1. Official Narrative (2–3 sentences): Summarize how the article presents the issue. Stay neutral.
-
-2. Jargon & Spin Decode Table (3–5 rows): For each term or phrase, show:
-– Phrase
-– Literal Meaning
-– What It Might Be Hiding
-
-3. Human Story Snapshot (2–3 sentences): Describe, in plain language, how the events likely impact ordinary people. Label as hypothetical if you cannot verify.
-
-4. Follow the Money (2–3 sentences): Briefly note who financially, politically, or commercially benefits from this event or framing.
-
-5. What It Really Means (2 sentences): Succinctly rephrase the core reality behind the headline, in plain language.
-
-Avoid speculation unless labeled. Avoid assuming motives without evidence. Use clear, neutral language.
-
-ARTICLE:
-'''
-{content_for_prompt}
-'''
-"""
-
-                response = openai_client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[{"role": "user", "content": expert_prompt}]
-                )
-                analysis = response.choices[0].message.content
-            except Exception as openai_error:
-                print("❌ OpenAI error:", openai_error)
-                analysis = "Analysis unavailable (OpenAI error)"
-        else:
-            analysis = "Analysis unavailable (no OpenAI key configured)"
-
-        return jsonify({
-            "url": url,
-            "raw_text": content,
-            "analysis": analysis
-        })
-
-    except Exception as e:
-        print("❌ Error during article analysis:", str(e))
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/view_code', methods=['GET'])
+@app.route("/view_code")
 def view_code():
-    """Display the contents of this file in a simple textarea."""
+    """Display the contents of this file in a textarea."""
     try:
-        with open(__file__, 'r') as f:
+        with open(__file__, "r") as f:
             code = f.read()
-        html_content = (
-            "<textarea style='width:100%; height:90vh;' readonly>" +
-            escape(code) +
-            "</textarea>"
+        return (
+            "<textarea style='width:100%; height:90vh;' readonly>" + escape(code) + "</textarea>"
         )
-        return html_content
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
