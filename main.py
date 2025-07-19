@@ -7,7 +7,7 @@ import os
 app = Flask(__name__)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxxx"
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxxxx"
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
@@ -45,6 +45,7 @@ def scrape_article(url: str) -> str | None:
 @app.route("/")
 def home():
     return "Unspun is live!"
+
 
 @app.route("/analyze", methods=["GET"])
 def analyze_article():
@@ -90,6 +91,7 @@ def analyze_article():
         print("❌ Error during article analysis:", str(e))
         return jsonify({"error": str(e)}), 500
 
+
 @app.route("/view_code")
 def view_code():
     """Display the contents of this file in a textarea."""
@@ -101,6 +103,7 @@ def view_code():
         )
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
