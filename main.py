@@ -27,7 +27,7 @@ def analyze_article():
     try:
         result = fc_app.scrape_url(
             url=url,
-            formats=["text"],
+            formats=["markdown"],
             only_main_content=True,
             parse_pdf=True,
             max_age=14400000
@@ -51,23 +51,27 @@ def analyze_article():
         if openai_client:
             try:
                 system_prompt = (
-                    "You are the Unspun analysis engine composed of a historian, "
-                    "journalist, sociologist, and ethicist. When reviewing an article, "
-                    "draw on each perspective:\n"
-                    "- Provide historical context that informs the topic\n"
-                    "- Evaluate factual claims and journalistic integrity\n"
-                    "- Discuss the social and cultural impact on real people\n"
-                    "- Highlight ethical considerations and potential biases\n"
-                    "Focus only on the main body of the article, ignoring sidebars or "
-                    "navigation links. Return a clear, concise summary capturing the "
-                    "core message and human impact."
+                    "Read this article and summarize it through the lens of a historian, "
+                    "a sociologist, a media literacy expert, and a local journalist. "
+                    "Analyze for bias, framing, human impact, and what may have been omitted. "
+                    "If funding or political influence is visible, note it. "
+                    "Then return a short summary (5–7 sentences) in plain English that "
+                    "captures the full picture."
                 )
+
+                content_for_gpt = filtered_content
+                if len(content_for_gpt) > 4000:
+                    truncated = content_for_gpt[:4000]
+                    last_period = truncated.rfind('.')
+                    if last_period > 3000:
+                        truncated = truncated[:last_period + 1]
+                    content_for_gpt = truncated
 
                 summary_response = openai_client.chat.completions.create(
                     model="gpt-4",
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": filtered_content[:4000]}
+                        {"role": "user", "content": "Article:\n" + content_for_gpt}
                     ]
                 )
                 summary = summary_response.choices[0].message.content
