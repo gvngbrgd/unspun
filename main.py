@@ -27,13 +27,13 @@ def analyze_article():
     try:
         result = fc_app.scrape_url(
             url=url,
-            formats=["markdown"],
+            formats=["text"],
             only_main_content=True,
             parse_pdf=True,
             max_age=14400000
         )
         # The firecrawl SDK returns a ScrapeResponse object
-        content = result.markdown
+        content = result.textContent
 
         raw_content = content
         clean_paragraphs = [
@@ -50,33 +50,20 @@ def analyze_article():
         summary = None
         if openai_client:
             try:
-                content_for_summary = filtered_content
-                if len(content_for_summary) > 4000:
-                    truncated = content_for_summary[:4000]
-                    last_period = truncated.rfind('.')
-                    if last_period > 3000:
-                        truncated = truncated[:last_period + 1]
-                    content_for_summary = truncated
-
-                summary_prompt = f"""
-You are a historian, sociologist, and investigative journalist analyzing this article for bias, omissions, and human impact.
-
-Your job is to:
-1. Identify the core event or claim.
-2. Highlight signs of bias, spin, or framing techniques.
-3. Note what perspectives are missing or underrepresented.
-4. Provide broader social, historical, or political context.
-5. Explain the real-world human impact, if applicable.
-
-Use plain, accessible language — as if explaining to an engaged but non-expert reader. Avoid technical or academic jargon. Be analytical, not just summarizing. Your job is to decode, contextualize, and surface what the article isn’t saying out loud.
-
-Article:
-{content_for_summary}
-"""
+                system_prompt = (
+                    "You are a historian, sociologist, media literacy expert, and local journalist. "
+                    "Analyze the article below for bias, framing, omissions, funding or political influences, "
+                    "and the real-world human impact. Focus strictly on the main body text and ignore sidebars "
+                    "or navigation links. Provide a concise 5-7 sentence summary in plain English that captures "
+                    "the core event and broader context."
+                )
 
                 summary_response = openai_client.chat.completions.create(
                     model="gpt-4",
-                    messages=[{"role": "user", "content": summary_prompt}]
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": filtered_content[:4000]}
+                    ]
                 )
                 summary = summary_response.choices[0].message.content
             except Exception as openai_error:
