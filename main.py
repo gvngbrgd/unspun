@@ -8,7 +8,8 @@ app = Flask(__name__)
 
 # Set your API keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxxx"
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxx"
+                "xxxxxxx"
 
 # Initialize OpenAI client
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -48,10 +49,11 @@ def analyze_article():
             parse_pdf=True,
             max_age=14400000
         )
-        content = result.get("data", {}).get("textContent")
+        # The firecrawl SDK returns a ScrapeResponse object
+        content = result.markdown
 
         if not content:
-            print("No 'textContent' found. Full Firecrawl response:", result)
+            print("No content found in Firecrawl response:", vars(result))
             return jsonify({"error": "Could not extract article content"}), 500
 
         # Optional: summarize with OpenAI
