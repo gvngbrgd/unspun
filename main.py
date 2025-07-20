@@ -6,87 +6,81 @@ import os
 
 app = Flask(__name__)
 
+# Set your API keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxxxx"
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxx"
 
+# Initialize OpenAI client
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
 
-
-def extract_article(url: str) -> str | None:
-    """Retrieve and clean article content using the Firecrawl extract endpoint."""
-    try:
-        result = fc_app.extract(
-            urls=[url],
-            prompt="Extract the main body text of this article, excluding navigation or sidebar content.",
-        )
-
-        content = None
-        if isinstance(result, dict):
-            content = result.get("data")
-        else:
-            content = getattr(result, "data", None)
-
-        if not content:
-            print("No data found in Firecrawl response:", result)
-            return None
-
-        clean_paragraphs = [
-            p.strip()
-            for p in str(content).split("\n")
-            if len(p.strip()) > 60 and p.count("http") < 2
-        ]
-        filtered_content = "\n\n".join(clean_paragraphs)
-        return filtered_content
-    except Exception as exc:
-        print("Error during extraction:", exc)
-        return None
-
-
-@app.route("/")
+@app.route('/')
 def home():
     return "Unspun is live!"
 
-
-@app.route("/analyze", methods=["GET"])
+@app.route('/analyze', methods=['GET'])
 def analyze_article():
     url = request.args.get("url")
     if not url:
         return jsonify({"error": "URL parameter is required"}), 400
 
     try:
-        filtered_content = extract_article(url)
-        if not filtered_content:
+        result = fc_app.scrape_url(
+            url=url,
+            formats=["markdown"],
+            only_main_content=True,
+            parse_pdf=True,
+            max_age=14400000
+        )
+        # The firecrawl SDK returns a ScrapeResponse object
+        content = result.markdown
+
+        if not content:
+            print("No content found in Firecrawl response:", vars(result))
             return jsonify({"error": "Could not extract article content"}), 500
 
+        # Optional: summarize with OpenAI
         summary = None
         if openai_client:
             try:
-                system_prompt = (
-                    "You are an expert media analyst. Analyze the following article.\n"
-                    "- Focus only on the **main body of the article**\n"
-                    "- Ignore sidebars, unrelated headlines, and navigation links\n"
-                    "- Return a clear, concise summary focused on the article’s core message and human impact"
-                )
+                # Use first 4000 characters but try to cut at sentence boundary
+                content_for_summary = content[:4000]
+                if len(content) > 4000:
+                    # Try to cut at last sentence to avoid truncation mid-sentence
+                    last_period = content_for_summary.rfind('.')
+                    if last_period > 3000:  # Only if we find a period reasonably close to the end
+                        content_for_summary = content_for_summary[:last_period + 1]
 
+                summary_prompt = f"""
+You are a historian, sociologist, and investigative journalist analyzing this article for bias, omissions, and human impact.
+
+Your job is to:
+1. Identify the core event or claim.
+2. Highlight signs of bias, spin, or framing techniques.
+3. Note what perspectives are missing or underrepresented.
+4. Provide broader social, historical, or political context.
+5. Explain the real-world human impact, if applicable.
+
+Use plain, accessible language — as if explaining to an engaged but non-expert reader. Avoid technical or academic jargon. Be analytical, not just summarizing. Your job is to decode, contextualize, and surface what the article isn’t saying out loud.
+
+Article:
+{content_for_summary}
+"""
                 summary_response = openai_client.chat.completions.create(
                     model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": filtered_content[:4000]},
-                    ],
+                    messages=[{"role": "user", "content": summary_prompt}]
                 )
                 summary = summary_response.choices[0].message.content
-            except Exception as e:
-                print("❌ OpenAI error:", e)
-                summary = "Summary unavailable - OpenAI error"
+            except Exception as openai_error:
+                print(f"❌ OpenAI API error: {str(openai_error)}")
+                summary = "Summary unavailable - OpenAI API error"
         else:
-            summary = "Summary unavailable - no OpenAI key configured"
+            summary = "Summary unavailable - OpenAI API key not configured"
 
         return jsonify({
             "url": url,
             "summary": summary,
-            "raw_text": filtered_content,
+            "raw_text": content
         })
 
     except Exception as e:
@@ -94,18 +88,20 @@ def analyze_article():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/view_code")
+@app.route('/view_code', methods=['GET'])
 def view_code():
-    """Display the contents of this file in a textarea."""
+    """Display the contents of this file in a simple textarea."""
     try:
-        with open(__file__, "r") as f:
+        with open(__file__, 'r') as f:
             code = f.read()
-        return (
-            "<textarea style='width:100%; height:90vh;' readonly>" + escape(code) + "</textarea>"
+        html_content = (
+            "<textarea style='width:100%; height:90vh;' readonly>" +
+            escape(code) +
+            "</textarea>"
         )
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return html_content
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(host="0.0.0.0", port=10000)
