@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 # Set your API keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxxxx"
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxx"
 
 # Initialize OpenAI client
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -25,33 +25,45 @@ def analyze_article():
         return jsonify({"error": "URL parameter is required"}), 400
 
     try:
-        result = fc_app.scrape_url(
-            url=url,
-            formats=["markdown"],
-            only_main_content=True,
-            parse_pdf=True,
-            max_age=14400000
+        # Use Firecrawl's extract endpoint to obtain the main article text
+        extract_result = fc_app.extract(
+            urls=[url],
+            prompt="Extract the main article text as plain text."
         )
-        # The firecrawl SDK returns a ScrapeResponse object
-        content = result.markdown
+        # extract() returns a dictionary with success flag and data payload
+        content = ""
+        if isinstance(extract_result, dict):
+            content = extract_result.get("data") or ""
+            if isinstance(content, dict):
+                # If a schema was not specified, the text may be under the
+                # first key in the data dictionary
+                content = next(iter(content.values()), "")
+
+        # Filter out very short lines or link-heavy text to keep only the main body
+        raw_content = content
+        clean_paragraphs = [
+            p.strip() for p in raw_content.split("\n")
+            if len(p.strip()) > 60 and p.count("http") < 2
+        ]
+        filtered_content = "\n\n".join(clean_paragraphs)
 
         if not content:
-            print("No content found in Firecrawl response:", vars(result))
+            print("No content found in Firecrawl response:", extract_result)
             return jsonify({"error": "Could not extract article content"}), 500
 
         # Optional: summarize with OpenAI
         summary = None
         if openai_client:
             try:
-                # Use first 4000 characters but try to cut at a sentence boundary
-                content_for_summary = content[:4000]
-                if len(content) > 4000:
+                # Use first 4000 characters but try to cut at sentence boundary
+                content_for_summary = filtered_content[:4000]
+                if len(filtered_content) > 4000:
+                    # Try to cut at last sentence to avoid truncation mid-sentence
                     last_period = content_for_summary.rfind('.')
-                    if last_period > 3000:
+                    if last_period > 3000:  # Only if we find a period reasonably close to the end
                         content_for_summary = content_for_summary[:last_period + 1]
 
-                summary_prompt = f"""
-You are a historian, sociologist, and investigative journalist analyzing this article for bias, omissions, and human impact.
+                summary_prompt = f"""You are a historian, sociologist, and investigative journalist analyzing this article for bias, omissions, and human impact.
 
 Your job is to:
 1. Identify the core event or claim.
@@ -79,7 +91,7 @@ Article:
         return jsonify({
             "url": url,
             "summary": summary,
-            "raw_text": content
+            "raw_text": filtered_content
         })
 
     except Exception as e:
