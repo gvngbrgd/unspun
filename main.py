@@ -7,33 +7,18 @@ import os
 app = Flask(__name__)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxxx"
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxx"
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
 
-GPT_PROMPT_TEMPLATE = """
-You are a historian, sociologist, and political analyst. Analyze this news article content in five sections. Use clear, neutral language. Do not speculate unless explicitly labeled as hypothetical.
-
-CONTENT TO ANALYZE:
-{article_text}
-
-STRUCTURE YOUR OUTPUT:
-1. Official Narrative (2–3 sentences summarizing the main point of the article)
-2. Jargon & Spin Decode Table (3–5 rows in a table with 'Term/Phrase' and 'Decoded Meaning')
-3. Human Story Snapshot (2–3 sentence description of how a real person or group might be impacted — use “hypothetical” label if invented)
-4. Follow the Money (2–3 sentences identifying any financial, power, or institutional interests connected to the topic)
-5. What It Really Means (1–2 clear sentences interpreting the issue in real-world terms, from a public interest perspective)
-
-Label each section clearly and follow the tone and style of a professional researcher writing for a public literacy tool.
-"""
 
 def scrape_article(url: str) -> str | None:
     """Retrieve and clean article content using the Firecrawl API."""
     try:
         result = fc_app.scrape_url(
             url=url,
-            formats=["text"],
+            formats=["markdown"],
             only_main_content=True,
             exclude_tags=[
                 "nav",
@@ -54,9 +39,9 @@ def scrape_article(url: str) -> str | None:
             timeout=30000,
         )
 
-        content = result.textContent
+        content = result.markdown
         if not content:
-            print("No text content found in Firecrawl response:", vars(result))
+            print("No markdown content found in Firecrawl response:", vars(result))
             return None
 
         raw_content = content
@@ -71,9 +56,11 @@ def scrape_article(url: str) -> str | None:
         print("Error during scraping:", exc)
         return None
 
+
 @app.route("/")
 def home():
     return "Unspun is live!"
+
 
 @app.route("/analyze", methods=["GET"])
 def analyze_article():
@@ -86,30 +73,52 @@ def analyze_article():
         if not filtered_content:
             return jsonify({"error": "Could not extract article content"}), 500
 
-        analysis = None
+        summary = None
         if openai_client:
             try:
-                prompt = GPT_PROMPT_TEMPLATE.format(article_text=filtered_content[:4000])
+                content_for_summary = filtered_content[:4000]
+                if len(filtered_content) > 4000:
+                    last_period = content_for_summary.rfind(".")
+                    if last_period > 3000:
+                        content_for_summary = content_for_summary[: last_period + 1]
+
+                summary_prompt = f"""
+You are a historian, sociologist, and investigative journalist analyzing this article for bias, omissions, and human impact.
+
+Your job is to:
+1. Identify the core event or claim.
+2. Highlight signs of bias, spin, or framing techniques.
+3. Note what perspectives are missing or underrepresented.
+4. Provide broader social, historical, or political context.
+5. Explain the real-world human impact, if applicable.
+
+Use plain, accessible language — as if explaining to an engaged but non-expert reader. Avoid technical or academic jargon. Be analytical, not just summarizing. Your job is to decode, contextualize, and surface what the article isn’t saying out loud.
+
+Article:
+{content_for_summary}
+"""
+
                 response = openai_client.chat.completions.create(
                     model="gpt-4",
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[{"role": "user", "content": summary_prompt}],
                 )
-                analysis = response.choices[0].message.content
+                summary = response.choices[0].message.content
             except Exception as e:
                 print("❌ OpenAI error:", e)
-                analysis = "Analysis unavailable (OpenAI error)"
+                summary = "Summary unavailable - OpenAI error"
         else:
-            analysis = "Analysis unavailable (no OpenAI key configured)"
+            summary = "Summary unavailable - no OpenAI key configured"
 
         return jsonify({
             "url": url,
-            "analysis": analysis,
+            "summary": summary,
             "raw_text": filtered_content,
         })
 
     except Exception as e:
         print("❌ Error during article analysis:", str(e))
         return jsonify({"error": str(e)}), 500
+
 
 @app.route("/view_code")
 def view_code():
@@ -122,6 +131,7 @@ def view_code():
         )
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
