@@ -7,53 +7,39 @@ import os
 app = Flask(__name__)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxx"
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxxxx"
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
 
 
-def scrape_article(url: str) -> str | None:
-    """Retrieve and clean article content using the Firecrawl API."""
+def extract_article(url: str) -> str | None:
+    """Retrieve and clean article content using the Firecrawl extract endpoint."""
     try:
-        result = fc_app.scrape_url(
-            url=url,
-            formats=["markdown"],
-            only_main_content=True,
-            exclude_tags=[
-                "nav",
-                "footer",
-                "header",
-                "aside",
-                ".banner",
-                ".popup",
-                ".menu",
-                ".advertisement",
-                "#header",
-                "#footer",
-                "#nav",
-                "#sidebar",
-            ],
-            parse_pdf=True,
-            max_age=14400000,
-            timeout=30000,
+        result = fc_app.extract(
+            urls=[url],
+            prompt="Extract the main body text of this article, excluding navigation or sidebar content.",
         )
 
-        content = result.markdown
+        content = None
+        if isinstance(result, dict):
+            content = result.get("data")
+        else:
+            content = getattr(result, "data", None)
+
         if not content:
-            print("No markdown content found in Firecrawl response:", vars(result))
+            print("No data found in Firecrawl response:", result)
             return None
 
-        raw_content = content
         clean_paragraphs = [
             p.strip()
-            for p in raw_content.split("\n")
+            for p in str(content).split("\n")
             if len(p.strip()) > 60 and p.count("http") < 2
         ]
         filtered_content = "\n\n".join(clean_paragraphs)
         return filtered_content
     except Exception as exc:
-        print("Error during scraping:", exc)
+        print("Error during extraction:", exc)
         return None
 
 
@@ -69,40 +55,28 @@ def analyze_article():
         return jsonify({"error": "URL parameter is required"}), 400
 
     try:
-        filtered_content = scrape_article(url)
+        filtered_content = extract_article(url)
         if not filtered_content:
             return jsonify({"error": "Could not extract article content"}), 500
 
         summary = None
         if openai_client:
             try:
-                content_for_summary = filtered_content[:4000]
-                if len(filtered_content) > 4000:
-                    last_period = content_for_summary.rfind(".")
-                    if last_period > 3000:
-                        content_for_summary = content_for_summary[: last_period + 1]
-
-                summary_prompt = f"""
-You are a historian, sociologist, and investigative journalist analyzing this article for bias, omissions, and human impact.
-
-Your job is to:
-1. Identify the core event or claim.
-2. Highlight signs of bias, spin, or framing techniques.
-3. Note what perspectives are missing or underrepresented.
-4. Provide broader social, historical, or political context.
-5. Explain the real-world human impact, if applicable.
-
-Use plain, accessible language — as if explaining to an engaged but non-expert reader. Avoid technical or academic jargon. Be analytical, not just summarizing. Your job is to decode, contextualize, and surface what the article isn’t saying out loud.
-
-Article:
-{content_for_summary}
-"""
-
-                response = openai_client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[{"role": "user", "content": summary_prompt}],
+                system_prompt = (
+                    "You are an expert media analyst. Analyze the following article.\n"
+                    "- Focus only on the **main body of the article**\n"
+                    "- Ignore sidebars, unrelated headlines, and navigation links\n"
+                    "- Return a clear, concise summary focused on the article’s core message and human impact"
                 )
-                summary = response.choices[0].message.content
+
+                summary_response = openai_client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": filtered_content[:4000]},
+                    ],
+                )
+                summary = summary_response.choices[0].message.content
             except Exception as e:
                 print("❌ OpenAI error:", e)
                 summary = "Summary unavailable - OpenAI error"
