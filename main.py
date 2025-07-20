@@ -7,7 +7,7 @@ import os
 app = Flask(__name__)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxx"
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxxx"
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
@@ -71,7 +71,6 @@ def scrape_article(url: str) -> str | None:
         print("Error during scraping:", exc)
         return None
 
-
 @app.route("/")
 def home():
     return "Unspun is live!"
@@ -119,9 +118,7 @@ def view_code():
         with open(__file__, "r") as f:
             code = f.read()
         return (
-            "<textarea style='width:100%; height:90vh;' readonly>"
-            + escape(code)
-            + "</textarea>"
+            "<textarea style='width:100%; height:90vh;' readonly>" + escape(code) + "</textarea>"
         )
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
