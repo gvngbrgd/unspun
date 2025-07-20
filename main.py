@@ -12,13 +12,28 @@ FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY") or "fc-xxxxxxxxxxxxxxxxxxxxxx
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 fc_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
 
+GPT_PROMPT_TEMPLATE = """
+You are a historian, sociologist, and political analyst. Analyze this news article content in five sections. Use clear, neutral language. Do not speculate unless explicitly labeled as hypothetical.
+
+CONTENT TO ANALYZE:
+{article_text}
+
+STRUCTURE YOUR OUTPUT:
+1. Official Narrative (2–3 sentences summarizing the main point of the article)
+2. Jargon & Spin Decode Table (3–5 rows in a table with 'Term/Phrase' and 'Decoded Meaning')
+3. Human Story Snapshot (2–3 sentence description of how a real person or group might be impacted — use “hypothetical” label if invented)
+4. Follow the Money (2–3 sentences identifying any financial, power, or institutional interests connected to the topic)
+5. What It Really Means (1–2 clear sentences interpreting the issue in real-world terms, from a public interest perspective)
+
+Label each section clearly and follow the tone and style of a professional researcher writing for a public literacy tool.
+"""
 
 def scrape_article(url: str) -> str | None:
     """Retrieve and clean article content using the Firecrawl API."""
     try:
         result = fc_app.scrape_url(
             url=url,
-            formats=["markdown"],
+            formats=["text"],
             only_main_content=True,
             exclude_tags=[
                 "nav",
@@ -39,9 +54,9 @@ def scrape_article(url: str) -> str | None:
             timeout=30000,
         )
 
-        content = result.markdown
+        content = result.textContent
         if not content:
-            print("No markdown content found in Firecrawl response:", vars(result))
+            print("No text content found in Firecrawl response:", vars(result))
             return None
 
         raw_content = content
@@ -61,7 +76,6 @@ def scrape_article(url: str) -> str | None:
 def home():
     return "Unspun is live!"
 
-
 @app.route("/analyze", methods=["GET"])
 def analyze_article():
     url = request.args.get("url")
@@ -73,45 +87,30 @@ def analyze_article():
         if not filtered_content:
             return jsonify({"error": "Could not extract article content"}), 500
 
-        summary = None
+        analysis = None
         if openai_client:
-            system_prompt = (
-                "You are a historian, journalist, sociologist, and ethicist "
-                "analyzing this article for bias, omissions, and human impact.\n"
-                "Your job is to:\n"
-                "1. Identify the core event or claim.\n"
-                "2. Highlight signs of bias, spin, or framing techniques.\n"
-                "3. Note what perspectives are missing or underrepresented.\n"
-                "4. Provide broader social, historical, or political context.\n"
-                "5. Explain the real-world human impact, if applicable.\n\n"
-                "Use plain, accessible language. Interpret and analyze rather "
-                "than just summarizing."
-            )
             try:
-                summary_response = openai_client.chat.completions.create(
+                prompt = GPT_PROMPT_TEMPLATE.format(article_text=filtered_content[:4000])
+                response = openai_client.chat.completions.create(
                     model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": filtered_content[:4000]},
-                    ],
+                    messages=[{"role": "user", "content": prompt}],
                 )
-                summary = summary_response.choices[0].message.content
+                analysis = response.choices[0].message.content
             except Exception as e:
                 print("❌ OpenAI error:", e)
-                summary = "Analysis unavailable (OpenAI error)"
+                analysis = "Analysis unavailable (OpenAI error)"
         else:
-            summary = "Analysis unavailable (no OpenAI key configured)"
+            analysis = "Analysis unavailable (no OpenAI key configured)"
 
         return jsonify({
             "url": url,
-            "summary": summary,
+            "analysis": analysis,
             "raw_text": filtered_content,
         })
 
     except Exception as e:
         print("❌ Error during article analysis:", str(e))
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/view_code")
 def view_code():
@@ -126,7 +125,6 @@ def view_code():
         )
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
