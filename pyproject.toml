@@ -10,4 +10,5 @@ dependencies = [
     "requests>=2.32.4",
     "firecrawl-py",
     "gunicorn",
+    "pydantic>=2.7.1",
 ]
