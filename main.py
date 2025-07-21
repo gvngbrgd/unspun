@@ -25,7 +25,6 @@ def extract_article(url: str) -> str | None:
             urls=[url],
             prompt="Extract only the main article text.",
             schema=ArticleSchema.model_json_schema(),
-            enableWebSearch=False,
         )
 
         data = response.get("data") if isinstance(response, dict) else getattr(response, "data", None)
